@@ -73,6 +73,29 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 
 
+// Chat Schema
+const chatSchema = new mongoose.Schema({
+  booking_id:String,
+  handyman_id: String,
+  user_id: String,
+  sender:String,
+  contents: String,
+  date_sent: { type: Date, default: Date.now },
+});
+
+const Chat = mongoose.model('Chat', chatSchema);
+
+// Notification Schema
+const notificationSchema = new mongoose.Schema({
+  handymanId: String,
+  userId: String,
+  notification_content: String,
+  date_sent: { type: Date, default: Date.now },
+  notif_for: String,
+});
+
+const Notification = mongoose.model('Notification', notificationSchema);
+
 
 app.post('/register', async (req, res) => {
   const { fname, lname, username, password, dateOfBirth, contact, address, images, dataPrivacyConsent } = req.body;
@@ -412,20 +435,15 @@ app.post('/api/bookings', async (req, res) => {
   const {
     userId,
     handymanId,
-    handymanName,
-    handymanType,
-    name,
-    phone,
-    address,
-    city,
     serviceDetails,
     dateOfService,
     urgentRequest,
     images,
-    status="requested",
+    status = "requested",
   } = req.body;
 
   try {
+    // Create a new booking
     const newBooking = new Booking({
       userId,
       handymanId,
@@ -436,7 +454,23 @@ app.post('/api/bookings', async (req, res) => {
       status,
     });
 
+    // Save the booking
     await newBooking.save();
+
+    // Create a notification for the handyman
+    const notificationContent = `You have a new booking request from ${name} for the service: ${serviceDetails}.`;
+    
+    const newNotification = new Notification({
+      handymanId,
+      userId,
+      notification_content: notificationContent,
+      notif_for: "handymen",  // Specify that this notification is for handymen
+    });
+
+    // Save the notification
+    await newNotification.save();
+
+    // Send response
     res.status(200).json({ message: 'Booking request saved successfully' });
   } catch (error) {
     console.error('Error saving booking:', error);
@@ -445,29 +479,86 @@ app.post('/api/bookings', async (req, res) => {
 });
 
 
+app.get('/bookings', async (req, res) => {
+  const handymanId = req.query.handymanId;
+  const status = req.query.status;
 
+  try {
+    const bookings = await Booking.find({
+      handymanId: handymanId,
+      status: status,
+    });
 
-// Chat Schema
-const chatSchema = new mongoose.Schema({
-  booking_id:String,
-  handyman_id: String,
-  user_id: String,
-  sender:String,
-  contents: String,
-  date_sent: { type: Date, default: Date.now },
+    // Prepare an array to hold bookings with user details
+    const bookingsWithUserDetails = await Promise.all(
+      bookings.map(async (booking) => {
+        try {
+          // Fetch user data based on userId
+          const user = await User.findById(booking.userId).select('fname lname');
+          return {
+            ...booking._doc, // Spread operator to copy existing booking data
+            bookerFirstName: user ? user.fname : 'Unknown', // Default to 'Unknown' if user not found
+            bookerLastName: user ? user.lname : 'Unknown',
+          };
+        } catch (userErr) {
+          console.error('Error fetching user details:', userErr);
+          return {
+            ...booking._doc,
+            bookerFirstName: 'Unknown',
+            bookerLastName: 'Unknown',
+          };
+        }
+      })
+    );
+
+    res.status(200).json(bookingsWithUserDetails);
+  } catch (err) {
+    console.error('Error fetching bookings:', err); // Log the error details
+    res.status(500).json({ error: 'Failed to fetch bookings' });
+  }
 });
 
-const Chat = mongoose.model('Chat', chatSchema);
+app.get('/bookings-user', async (req, res) => {
+  const userId = req.query.userId;
+  const status = req.query.status;
 
-// Notification Schema
-const notificationSchema = new mongoose.Schema({
-  handymanId: String,
-  userId: String,
-  notification_content: String,
-  date_sent: { type: Date, default: Date.now },
+  try {
+    const bookings = await Booking.find({
+      userId: userId,
+      status: status,
+    });
+
+    // Prepare an array to hold bookings with user details
+    const bookingsWithUserDetails = await Promise.all(
+      bookings.map(async (booking) => {
+        try {
+          // Fetch user data based on userId
+          const user = await Handyman.findById(booking.handymanId).select('fname lname');
+          return {
+            ...booking._doc, // Spread operator to copy existing booking data
+            bookerFirstName: user ? user.fname : 'Unknown', // Default to 'Unknown' if user not found
+            bookerLastName: user ? user.lname : 'Unknown',
+          };
+        } catch (userErr) {
+          console.error('Error fetching user details:', userErr);
+          return {
+            ...booking._doc,
+            bookerFirstName: 'Unknown',
+            bookerLastName: 'Unknown',
+          };
+        }
+      })
+    );
+
+    res.status(200).json(bookingsWithUserDetails);
+  } catch (err) {
+    console.error('Error fetching bookings:', err); // Log the error details
+    res.status(500).json({ error: 'Failed to fetch bookings' });
+  }
 });
 
-const Notification = mongoose.model('Notification', notificationSchema);
+
+
 
 // Accept booking and send chat and notification
 app.post('/accept-booking', async (req, res) => {
@@ -713,6 +804,31 @@ app.get('/api/notifications/:userId', async (req, res) => {
   }
 });
 
+// Get all notifications for a specific handyman
+app.get('/api/handynotifications/:handymanId', async (req, res) => {
+  try {
+    // Fetch notifications where 'notif_for' is 'handyman' and matching handyman ID
+    const notifications = await Notification.find({ 
+      handymanId: req.params.handymanId, 
+      notif_for: 'handyman' 
+    });
+    
+    // Populate handyman details for each notification
+    const notificationsWithDetails = await Promise.all(notifications.map(async (notification) => {
+      const user = await User.findById(notification.userId);
+      return {
+        title: notification.notification_content,
+        description: `${user.fname} ${user.lname} - ${notification.notification_content}`,
+        date: notification.date_sent,
+      };
+    }));
+
+    res.json(notificationsWithDetails);
+  } catch (error) {
+    res.status(500).send({ error: error.message });
+  }
+});
+
 
 
 // Endpoint to fetch messages grouped by booking_id
@@ -871,6 +987,139 @@ app.post('/api/send-message-user', async (req, res) => {
   }
 });
 
+
+
+const ReportSchema = new mongoose.Schema({
+  handymanId: { type: String, required: true },
+  userId: { type: String, required: true },
+  reportReason: { type: String, required: true },
+  timestamp: { type: Date, default: Date.now },
+  status: { type: String, default: 'pending' },
+  additionalInfo: {
+    workDescription: { type: String, required: true },
+    dateReported: { type: Date, default: Date.now },
+  },
+});
+const Report = mongoose.model('Report', ReportSchema);
+
+
+// Report a Booking
+app.post('/reports', async (req, res) => {
+  try {
+    const { bookingId, reason } = req.body;
+
+    // Validate input
+    if (!bookingId || !reason) {
+      return res.status(400).json({ message: 'Booking ID and reason are required' });
+    }
+
+    // Find the booking to get the userId, handymanId, and serviceDetails
+    const booking = await Booking.findById(bookingId);
+    if (!booking) {
+      console.error(`Booking not found for ID: ${bookingId}`); // Log specific error
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+
+    // Create the report using the retrieved booking information
+    const report = new Report({
+      handymanId: booking.handymanId, // Get handymanId from the booking
+      userId: booking.userId, // Get userId from the booking
+      reportReason: reason,
+      timestamp: new Date(),
+      status: 'pending', // Default status
+      additionalInfo: {
+        workDescription: booking.serviceDetails, // Get serviceDetails as workDescription
+        dateReported: new Date(), // Set date reported
+      },
+    });
+
+    await report.save();
+    console.log(`Report created successfully for booking ID: ${bookingId}`); // Log success
+
+    res.status(201).json(report);
+  } catch (error) {
+    console.error('Error in POST /reports:', error); // Log the full error
+    res.status(500).json({ message: 'Error reporting booking', error: error.message });
+  }
+});
+
+// Mark Booking as Completed
+app.patch('/bookings/:id/complete', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the booking to get the handymanId
+    const booking = await Booking.findById(id);
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+
+    // Update the booking status to completed
+    booking.status = 'completed';
+    await booking.save();
+
+    res.status(200).json(booking);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error marking booking as completed', error });
+  }
+});
+
+
+const feedbackSchema = new mongoose.Schema({
+  handymanId: {
+    type: mongoose.Schema.Types.ObjectId,
+    required: true,
+    ref: 'Handyman', // Reference to the Handyman collection
+  },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    required: true,
+    ref: 'User', // Reference to the User collection
+  },
+  feedbackText: {
+    type: String,
+    required: true,
+    trim: true, // Trim whitespace from feedback text
+  },
+  rating: {
+    type: Number,
+    required: true,
+    min: 1, // Assuming rating is between 1 and 5
+    max: 5,
+  },
+}, {
+  timestamps: true, // Automatically add createdAt and updatedAt fields
+});
+
+const Feedback = mongoose.model('Feedback', feedbackSchema);
+
+app.post('/feedback', async (req, res) => {
+  try {
+    const { bookingId, rating, feedbackText } = req.body;
+
+    // Find the booking to get handymanId and userId
+    const booking = await Booking.findById(bookingId);
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+
+    const feedback = new Feedback({
+      handymanId: booking.handymanId,
+      userId: booking.userId,
+      rating, // rating is a number (e.g., 1-5 stars)
+      feedbackText,
+      timestamp: new Date(),
+    });
+
+    await feedback.save();
+
+    res.status(201).json({ message: 'Feedback submitted successfully', feedback });
+  } catch (error) {
+    console.error('Error submitting feedback:', error);
+    res.status(500).json({ message: 'Error submitting feedback', error: error.message });
+  }
+});
 
 
 

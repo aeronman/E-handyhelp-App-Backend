@@ -105,6 +105,27 @@ const notificationSchema = new mongoose.Schema({
 
 const Notification = mongoose.model("Notification", notificationSchema);
 
+const ContactAdminSchema = new mongoose.Schema({
+  userId: {
+    type: String, // Adjust type if needed, depending on how your IDs are formatted
+    required: true,
+  },
+  subject: {
+    type: String,
+    required: true,
+  },
+  details: {
+    type: String,
+    required: true,
+  },
+  dateSent: {
+    type: Date,
+    default: Date.now,
+  },
+});
+
+const ContactAdmin = mongoose.model("ContactAdmin", ContactAdminSchema);
+
 app.post("/register", async (req, res) => {
   const {
     fname,
@@ -1058,7 +1079,6 @@ const ReportSchema = new mongoose.Schema({
 });
 const Report = mongoose.model("Report", ReportSchema);
 
-// Report a Booking
 app.post("/reports", async (req, res) => {
   try {
     const { bookingId, reason, reported_by } = req.body;
@@ -1094,18 +1114,28 @@ app.post("/reports", async (req, res) => {
     await report.save();
     console.log(`Report created successfully for booking ID: ${bookingId}`); // Log success
 
-    // Create a notification for the handyman
+    // Determine who the notification is for based on who reported
+    let notif_for;
+    if (reported_by === "handyman") {
+      notif_for = "user"; // If reported by handyman, notif_for should be user
+    } else if (reported_by === "user") {
+      notif_for = "handyman"; // If reported by user, notif_for should be handyman
+    } else {
+      return res.status(400).json({ message: "Invalid reporter type" });
+    }
+
+    // Create the notification
     const notification = new Notification({
       handymanId: booking.handymanId, // Get handymanId from the booking
       userId: booking.userId, // Get userId from the booking
       notification_content: `You have been reported by a ${reported_by}!`, // Notification content
-      notif_for: reported_by, // Who the notification is for
+      notif_for: notif_for, // Who the notification is for (based on above logic)
       date_sent: new Date(), // Current date
     });
 
     await notification.save(); // Save the notification
     console.log(
-      `Notification created successfully for handyman ID: ${booking.handymanId}`,
+      `Notification created successfully for ${notif_for} based on report by ${reported_by}`,
     );
 
     res.status(201).json(report);
@@ -1197,18 +1227,28 @@ app.post("/feedback", async (req, res) => {
 
     await feedback.save();
 
-    // Create a notification for the handyman
+    // Determine who the notification is for based on who sent the feedback
+    let notif_for;
+    if (sentBy === "handyman") {
+      notif_for = "user"; // If feedback is sent by handyman, notif_for should be user
+    } else if (sentBy === "user") {
+      notif_for = "handyman"; // If feedback is sent by user, notif_for should be handyman
+    } else {
+      return res.status(400).json({ message: "Invalid sender type" });
+    }
+
+    // Create a notification for the corresponding party
     const notification = new Notification({
       handymanId: booking.handymanId, // Get handymanId from the booking
       userId: booking.userId, // Get userId from the booking
       notification_content: `A ${sentBy} has given you feedback.`, // Notification content
-      notif_for: sentBy, // Who the notification is for
+      notif_for: notif_for, // Who the notification is for (based on above logic)
       date_sent: new Date(), // Current date
     });
 
     await notification.save(); // Save the notification
     console.log(
-      `Notification created successfully for handyman ID: ${booking.handymanId}`,
+      `Notification created successfully for ${notif_for} based on feedback from ${sentBy}`,
     );
 
     res
@@ -1283,7 +1323,7 @@ const sendOTP = async (phoneNumber, otp) => {
         apikey: apiKey,
         number: phoneNumber,
         message: `Your OTP is: ${otp}`,
-        sendername: "SEMAPHORE",
+        sendername: "Thesis",
       },
       {
         headers: {
@@ -1335,6 +1375,95 @@ app.post("/send-otp", async (req, res) => {
     res
       .status(500)
       .json({ message: "Error sending OTP", error: error.message });
+  }
+});
+
+app.post("/verify-otp", async (req, res) => {
+  const { phoneNumber, otp } = req.body; // Using contact from the request body
+  console.log(phoneNumber);
+  console.log(otp);
+  try {
+    // Search in handymen collection with contact field
+    let user = await Handyman.findOne({ contact: phoneNumber }); // Ensure contact field is used
+
+    if (!user) {
+      // If not found, search in user collection with contact field
+      user = await User.findOne({ contact: phoneNumber }); // Ensure contact field is used
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: "Contact number not found" }); // Updated message
+    }
+
+    // Check if OTP is valid and not expired
+    const currentTime = new Date();
+    if (user.otp_fp === otp) {
+      return res.status(200).json({ userId: user._id });
+    } else {
+      return res.status(400).json({ message: "Invalid or expired OTP" });
+    }
+  } catch (error) {
+    return res
+      .status(500)
+      .json({ message: "An error occurred", error: error.message });
+  }
+});
+
+app.post("/contact-admin", async (req, res) => {
+  const { userId, subject, details } = req.body;
+
+  if (!userId || !subject || !details) {
+    return res
+      .status(400)
+      .json({ error: "User ID, subject, and details are required" });
+  }
+
+  try {
+    // Create a new contact admin entry
+    const newContactAdmin = new ContactAdmin({
+      userId, // Save userId
+      subject,
+      details,
+    });
+
+    await newContactAdmin.save();
+    return res.status(200).json({ message: "Message sent successfully" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Failed to send message" });
+  }
+});
+// Password Reset Endpoint
+app.post("/reset-password/:userId", async (req, res) => {
+  const { newPassword } = req.body;
+  const { userId } = req.params;
+
+  try {
+    // Check if userId exists in the Handyman collection
+    let user = await Handyman.findById(userId);
+
+    if (!user) {
+      // If not found in Handyman, check in User collection
+      user = await User.findById(userId);
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update the user's password
+    user.password = hashedPassword; // Assuming password field exists
+    await user.save();
+
+    return res.status(200).json({ message: "Password changed successfully" });
+  } catch (error) {
+    console.error("Error resetting password:", error);
+    return res
+      .status(500)
+      .json({ message: "An error occurred", error: error.message });
   }
 });
 

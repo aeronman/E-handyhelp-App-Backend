@@ -327,22 +327,22 @@ app.post("/register-handyman", async (req, res) => {
 
 // Login endpoint
 app.post("/login-handyman", async (req, res) => {
-  const { username, password } = req.body; // Removed fname and lname from here
+  const { username, password } = req.body;
 
-  console.log("Login attempt:", { username }); // Log the attempt to login
+  console.log("Login attempt:", { username });
 
   try {
     // Check if handyman exists
     const handyman = await Handyman.findOne({ username });
     if (!handyman) {
-      console.warn(`Login failed: Invalid username - ${username}`); // Log warning for invalid username
+      console.warn(`Login failed: Invalid username - ${username}`);
       return res.status(400).json({ message: "Invalid username or password" });
     }
 
     // Check if password is correct
     const isMatch = await bcrypt.compare(password, handyman.password);
     if (!isMatch) {
-      console.warn(`Login failed: Invalid password for username - ${username}`); // Log warning for invalid password
+      console.warn(`Login failed: Invalid password for username - ${username}`);
       return res.status(400).json({ message: "Invalid username or password" });
     }
 
@@ -351,10 +351,12 @@ app.post("/login-handyman", async (req, res) => {
       expiresIn: "1h",
     });
 
+    // Update the handyman's logged-in status
+    handyman.logged_in = 1;
+    await handyman.save(); // Save the update to the database
+
     // Log successful login
-    console.log(
-      `Login successful for user: ${username}, Handyman ID: ${handyman._id}`,
-    ); // Log successful login
+    console.log(`Login successful for user: ${username}, Handyman ID: ${handyman._id}`);
 
     // Send handyman data along with the token
     res.json({
@@ -372,10 +374,11 @@ app.post("/login-handyman", async (req, res) => {
         certificatesImages: handyman.certificatesImages,
         dataPrivacyConsent: handyman.dataPrivacyConsent,
         accounts_status: handyman.accounts_status,
+        logged_in: handyman.logged_in, // Include logged_in status in response
       },
     });
   } catch (error) {
-    console.error("Error during login:", error); // Log any server error
+    console.error("Error during login:", error);
     res.status(500).json({ message: "Server error" });
   }
 });

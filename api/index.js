@@ -263,11 +263,16 @@ const handymanSchema = new mongoose.Schema(
       type: String, // Store the OTP as a string
       default: null, // Default to null if not set
     },
+    logged_in: {
+      type: Number,
+      default: 0, // Default to 0, meaning not logged in
+    },
   },
   {
     timestamps: true, // Automatically create createdAt and updatedAt fields
   },
 );
+
 
 const Handyman = mongoose.model("Handyman", handymanSchema);
 

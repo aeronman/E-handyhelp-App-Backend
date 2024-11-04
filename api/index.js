@@ -356,27 +356,31 @@ app.post("/register-handyman", async (req, res) => {
   } = req.body;
 
   // Password hashing
-  const hashedPassword = await bcrypt.hash(password, 10);
-
-  const handyman = new Handyman({
-    fname,
-    lname,
-    username,
-    password: hashedPassword,
-    dateOfBirth,
-    contact,
-    address,
-    specialization,
-    idImages,
-    certificatesImages,
-    dataPrivacyConsent,
-  });
-
   try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const handyman = new Handyman({
+      fname,
+      lname,
+      username,
+      password: hashedPassword,
+      dateOfBirth,
+      contact,
+      address,
+      specialization,
+      idImages,
+      certificatesImages,
+      dataPrivacyConsent,
+    });
+
     await handyman.save();
     res.status(201).send("Handyman registered successfully");
   } catch (error) {
-    res.status(500).send("Error registering handyman");
+    // Log the error to the console for debugging
+    console.error("Error registering handyman:", error);
+
+    // Send a more descriptive error message (avoid sending sensitive information)
+    res.status(500).send("Error registering handyman. Please try again later.");
   }
 });
 
